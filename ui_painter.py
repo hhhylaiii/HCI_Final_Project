@@ -21,9 +21,6 @@ def draw_pose_landmarks(image, pose_landmarks):
 def draw_posture_ui(image, result, fps=None):
     """
     Draw score, status, detailed metrics (debug), and FPS on the image.
-
-    result: dict returned by PostureScore.compute(...) or None.
-    fps: current frames-per-second value (float) or None.
     """
     h, w = image.shape[:2]
 
@@ -35,11 +32,11 @@ def draw_posture_ui(image, result, fps=None):
 
         # Color by score
         if current_score >= 80:
-            color = (0, 255, 0)  # Green (80-100)
+            color = (0, 255, 0)  # Green
         elif current_score >= 50:
-            color = (0, 255, 255)  # Yellow (50-79)
+            color = (0, 255, 255)  # Yellow
         else:
-            color = (0, 0, 255)  # Red (<50)
+            color = (0, 0, 255)  # Red
 
         # Score and status
         cv2.putText(
@@ -84,7 +81,7 @@ def draw_posture_ui(image, result, fps=None):
             y_start + gap * 2
         )
 
-    # FPS display (always draw if provided)
+    # FPS display
     if fps is not None:
         cv2.putText(
             image, f"FPS: {int(fps)}",
@@ -93,4 +90,3 @@ def draw_posture_ui(image, result, fps=None):
             (100, 100, 100),
             1
         )
-
