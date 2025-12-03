@@ -7,6 +7,7 @@ from posture_score import extract_face_shoulder_features, PostureScore
 from ui_painter import draw_pose_landmarks, draw_posture_ui
 
 
+# for test
 def main():
     cap = cv2.VideoCapture(0)
     # 解析度設定需與標定時一致
