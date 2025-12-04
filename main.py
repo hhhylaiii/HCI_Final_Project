@@ -4,6 +4,7 @@ import mediapipe as mp
 import numpy as np
 import os
 from posture_score import extract_face_shoulder_features, PostureScore
+from posture_history import PostureHistory
 from ui_painter import draw_pose_landmarks, draw_posture_ui
 
 
@@ -40,8 +41,14 @@ def main():
 
 
     scorer = PostureScore()
+    history = PostureHistory()
     mp_pose = mp.solutions.pose
     prev_time = 0.0
+
+    # Baseline Calibration Variables
+    is_calibrated = False
+    calibration_data = []
+    CALIBRATION_FRAMES = 90  # Approx 3 seconds
 
     with mp_pose.Pose(
         min_detection_confidence=0.5,
@@ -74,22 +81,65 @@ def main():
                 # Draw skeleton
                 draw_pose_landmarks(frame_bgr, results.pose_landmarks)
 
-                # Feature extraction + scoring
-                # 傳入 2D landmarks 與畫面寬高 (Pixel Calculation)
+                # Feature extraction
                 features = extract_face_shoulder_features(
                     results.pose_landmarks.landmark, 
                     w, 
                     h
                 )
-                result_dict = scorer.compute(features)
+
+                if not is_calibrated:
+                    # --- Calibration Phase ---
+                    calibration_data.append(features)
+                    
+                    # Draw Calibration UI
+                    progress = len(calibration_data) / CALIBRATION_FRAMES
+                    bar_w = 400
+                    bar_h = 30
+                    x_start = (w - bar_w) // 2
+                    y_start = h - 100
+                    
+                    # Draw text
+                    cv2.putText(frame_bgr, "Calibrating... Please sit upright and look at screen", 
+                                (x_start - 50, y_start - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                    
+                    # Draw progress bar
+                    cv2.rectangle(frame_bgr, (x_start, y_start), (x_start + bar_w, y_start + bar_h), (100, 100, 100), -1)
+                    cv2.rectangle(frame_bgr, (x_start, y_start), (x_start + int(bar_w * progress), y_start + bar_h), (0, 255, 0), -1)
+
+                    if len(calibration_data) >= CALIBRATION_FRAMES:
+                        # Compute average features
+                        avg_features = {}
+                        keys = features.keys()
+                        for k in keys:
+                            values = [d[k] for d in calibration_data]
+                            avg_features[k] = sum(values) / len(values)
+                        
+                        scorer.set_baseline(avg_features)
+                        is_calibrated = True
+                        print("Baseline calibration complete.")
+                
+                else:
+                    # --- Normal Tracking Phase ---
+                    result_dict = scorer.compute(features)
+                    
+                    # Update history
+                    history.update(time.time(), result_dict)
+
+            else:
+                if not is_calibrated:
+                     cv2.putText(frame_bgr, "Please sit in front of camera to calibrate", 
+                                (100, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
             # FPS calculation
             curr_time = time.time()
             fps = 1.0 / (curr_time - prev_time) if prev_time > 0 else 0.0
             prev_time = curr_time
 
-            # Draw UI
-            draw_posture_ui(frame_bgr, result_dict, fps=fps)
+            # Draw UI (only if calibrated or if we want to show FPS during calibration)
+            # We pass result_dict which is None during calibration, so draw_posture_ui handles it gracefully (shows nothing or just FPS)
+            history_summary = history.snapshot()
+            draw_posture_ui(frame_bgr, result_dict, fps=fps, history_summary=history_summary)
 
             cv2.imshow("Posture Assistant (Calibrated)", frame_bgr)
             if cv2.waitKey(5) & 0xFF == ord("q"):

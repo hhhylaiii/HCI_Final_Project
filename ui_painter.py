@@ -16,7 +16,7 @@ def draw_pose_landmarks(image, pose_landmarks):
         landmark_drawing_spec=mp_drawing_styles.get_default_pose_landmarks_style()
     )
 
-def draw_posture_ui(image, result, fps=None):
+def draw_posture_ui(image, result, fps=None, history_summary=None):
     """
     Draw score, status, detailed metrics (debug), and FPS on the image.
     """
@@ -98,6 +98,34 @@ def draw_posture_ui(image, result, fps=None):
             smoothed_feats.get("nose_shoulder_angle", 0), # 取得計算出的角度
             penalties.get("hunchback", 0),                # 取得駝背扣分
             y_start + gap * 3
+        )
+
+    # 5. [Scheme 2] History Summary
+    if history_summary is not None:
+        # Display compact history stats
+        # Good: XX%, Bad: XX%, Max Bad Streak: XXs
+        
+        # Calculate percentages
+        good_ratio = history_summary.get("good_ratio", 0.0)
+        bad_ratio = history_summary.get("bad_ratio", 0.0)
+        max_bad_streak = history_summary.get("max_bad_streak", 0.0)
+        
+        hist_text_y = 250  # Place below debug metrics
+        hist_gap = 25
+        
+        cv2.putText(
+            image, f"Good: {good_ratio*100:.1f}%", (20, hist_text_y),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 100, 0), 1, cv2.LINE_AA
+        )
+        
+        cv2.putText(
+            image, f"Bad: {bad_ratio*100:.1f}%", (20, hist_text_y + hist_gap),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 1, cv2.LINE_AA
+        )
+        
+        cv2.putText(
+            image, f"Max Bad Streak: {max_bad_streak:.1f}s", (20, hist_text_y + hist_gap * 2),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1, cv2.LINE_AA
         )
 
     # 4. FPS 顯示

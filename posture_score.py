@@ -74,6 +74,7 @@ class PostureScore:
     def __init__(self):
         self.ALPHA = 0.4
         self.history = None
+        self.baseline = None
         
         # 1. 角度類 (Degrees) - 左右傾斜
         self.SHOULDER_WARN = 5.0
@@ -91,6 +92,10 @@ class PostureScore:
         self.DIST_WARN = 90.0 
         self.DIST_BAD = 110.0
 
+    def set_baseline(self, features):
+        """Set the baseline features for relative scoring."""
+        self.baseline = features
+
     def smooth_features(self, new_features):
         if self.history is None:
             self.history = new_features
@@ -103,25 +108,52 @@ class PostureScore:
         return smoothed
 
     def _penalty_from_tilt(self, deg):
-        if deg < self.SHOULDER_WARN: return 0
-        elif deg < self.SHOULDER_BAD: return 10
-        else: return 20
+        if self.baseline:
+            # Relative deviation
+            diff = abs(deg - self.baseline["shoulder_tilt_deg"])
+            if diff < 5.0: return 0
+            elif diff < 10.0: return 10 
+            else: return 20
+        else:
+            if deg < self.SHOULDER_WARN: return 0
+            elif deg < self.SHOULDER_BAD: return 10
+            else: return 20
 
     def _penalty_from_roll(self, deg):
-        if deg < self.HEAD_ROLL_WARN: return 0
-        elif deg < self.HEAD_ROLL_BAD: return 10
-        else: return 20
+        if self.baseline:
+            # Relative deviation
+            diff = abs(deg - self.baseline["head_roll_deg"])
+            if diff < 10.0: return 0
+            elif diff < 15.0: return 10
+            else: return 20
+        else:
+            if deg < self.HEAD_ROLL_WARN: return 0
+            elif deg < self.HEAD_ROLL_BAD: return 10
+            else: return 20
     
     def _penalty_from_distance(self, dist_px):
-        if dist_px < self.DIST_WARN: return 0
-        elif dist_px < self.DIST_BAD: return 10
-        else: return 20
+        if self.baseline:
+            # Relative deviation: positive means closer than baseline
+            diff = dist_px - self.baseline["eye_dist_px"]
+            if diff < 10.0: return 0
+            elif diff < 30.0 : return 10
+            else: return 20
+        else:
+            if dist_px < self.DIST_WARN: return 0
+            elif dist_px < self.DIST_BAD: return 10
+            else: return 20
 
     def _penalty_from_hunch(self, angle):
-        """新增：駝背扣分邏輯"""
-        if angle < self.HUNCH_WARN: return 0
-        elif angle < self.HUNCH_BAD: return 15
-        else: return 30  # 駝背通常是比較嚴重的姿勢問題，扣分重一點
+        if self.baseline:
+            # Relative deviation: positive means angle increased (more hunch)
+            diff = angle - self.baseline["nose_shoulder_angle"]
+            if diff < 10.0: return 0
+            elif diff < 25.0: return 15
+            else: return 30
+        else:
+            if angle < self.HUNCH_WARN: return 0
+            elif angle < self.HUNCH_BAD: return 15
+            else: return 30  # 駝背通常是比較嚴重的姿勢問題，扣分重一點
 
     def compute(self, features):
         f = self.smooth_features(features)
