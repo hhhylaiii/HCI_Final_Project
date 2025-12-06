@@ -1,6 +1,7 @@
 import cv2
 import time
 import mediapipe as mp
+import queue
 import numpy as np
 import os
 import threading
@@ -15,34 +16,32 @@ from ui_painter import draw_pose_landmarks, draw_posture_ui
 
 # --- 設定全域常數 ---
 W, H = 1280, 720
-POMODORO_LIMIT_SECONDS = 30 * 60  # 久坐提醒時間 (30分鐘)
+POMODORO_LIMIT_SECONDS =  60  # 久坐提醒時間 (30分鐘)
 LOW_SCORE_THRESHOLD = 70          # 低於幾分開始警告
 WARNING_COOLDOWN = 5.0            # 語音警告冷卻時間 (秒)
 
 class VoiceAssistant:
-    """處理語音輸出的類別，使用執行緒避免卡住畫面"""
+    """非阻塞版，每次播放新 engine，播放完後釋放記憶體"""
     def __init__(self):
-        try:
-            self.engine = pyttsx3.init()
-            self.is_speaking = False
-        except:
-            print("語音模組初始化失敗，將以純文字顯示。")
-            self.engine = None
-
-    def _speak_thread(self, text):
-        if self.engine:
-            self.is_speaking = True
-            try:
-                self.engine.say(text)
-                self.engine.runAndWait()
-            except:
-                pass
-            self.is_speaking = False
+        self.lock = threading.Lock()  # 防止多執行緒同時播放時出錯
 
     def say(self, text):
-        if self.engine and not self.is_speaking:
-            t = threading.Thread(target=self._speak_thread, args=(text,))
-            t.start()
+        if not text:
+            return
+        # 用背景執行緒播放
+        threading.Thread(target=self._play, args=(text,), daemon=True).start()
+
+    def _play(self, text):
+        with self.lock:
+            try:
+                engine = pyttsx3.init()
+                engine.say(text)
+                engine.runAndWait()
+                engine.stop()
+                del engine
+            except Exception as e:
+                print("語音播放失敗:", e)
+
 
 def generate_report(score_log, duration_minutes):
     """程式結束時生成圖表"""
@@ -66,21 +65,21 @@ def generate_report(score_log, duration_minutes):
     plt.xlabel("Time (seconds)")
     plt.ylabel("Score")
     plt.ylim(0, 105)
-    plt.legend()
+    plt.legend(loc='upper left', bbox_to_anchor=(0.01, 0.2))
     plt.grid(True, alpha=0.3)
 
     # 加入文字統計
     info_text = (f"Duration: {duration_minutes:.1f} mins\n"
                  f"Avg Score: {avg_score:.1f}\n"
                  f"Good Posture: {good_ratio:.1f}%")
-    plt.gcf().text(0.15, 0.15, info_text, fontsize=10, 
+    plt.gcf().text(0.3, 0.15, info_text, fontsize=10, 
                    bbox=dict(facecolor='white', alpha=0.8))
 
     filename = f"posture_report_{int(time.time())}.png"
     plt.savefig(filename)
     print(f"健康報告已儲存為: {filename}")
     # 如果想直接顯示，把下面這行取消註解
-    # plt.show()
+    plt.show()
 
 def main():
     cap = cv2.VideoCapture(0)
@@ -194,6 +193,7 @@ def main():
                         scorer.set_baseline(avg_features)
                         is_calibrated = True
                         voice.say("校正完成，開始監控")
+                        voice.say("")
                         print("Calibration complete.")
                 
                 else:
@@ -209,6 +209,7 @@ def main():
                     # [功能] 語音警告 (低分且冷卻時間已過)
                     if score < LOW_SCORE_THRESHOLD:
                         if (current_time - last_warning_time) > WARNING_COOLDOWN:
+                            print("hello")
                             voice.say("請坐好，注意姿勢")
                             last_warning_time = current_time
 
@@ -239,7 +240,7 @@ def main():
                 if int(current_time) % 5 == 0: # 每5秒叫一次
                     voice.say("時間到了，請起來活動一下")
             else:
-                cv2.putText(frame_bgr, timer_text, (W - 250, 40), 
+                cv2.putText(frame_bgr, timer_text, (W - 350, 32), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, timer_color, 2)
 
             # 6. 繪製標準 UI
