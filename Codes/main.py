@@ -13,8 +13,8 @@ from report_generator import generate_report
 # --- 設定全域常數 ---
 W, H = 1280, 720
 POMODORO_LIMIT_SECONDS =  60  # 久坐提醒時間 (30分鐘)
-LOW_SCORE_THRESHOLD = 70          # 低於幾分開始警告
-WARNING_COOLDOWN = 5.0            # 語音警告冷卻時間 (秒)
+LOW_SCORE_THRESHOLD = 70      # 低於幾分開始警告
+WARNING_COOLDOWN = 5.0        # 語音警告冷卻時間 (秒)
 
 
 
@@ -60,6 +60,10 @@ def main():
     last_warning_time = 0        # 上次語音警告時間
     last_pomodoro_warning_time = 0 # 上次番茄鐘語音警告時間
     long_term_history = []       # 用於最後畫圖的數據 (時間, 分數)
+    
+    warning_text = ""
+    warning_display_start = 0
+    WARNING_DURATION = 1.0
     
     print("--- 操作說明 ---")
     print("按 'b': 切換背景模糊 (隱私模式)")
@@ -185,7 +189,14 @@ def main():
             tips_color = (0, 0, 0) 
             cv2.putText(frame_bgr, "'b': Blur background", (10, H - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.8, tips_color, 2)
             cv2.putText(frame_bgr, "'r': Reset Timer", (10, H - 55), cv2.FONT_HERSHEY_SIMPLEX, 0.8, tips_color, 2)
+            cv2.putText(frame_bgr, "'r': Reset Timer", (10, H - 55), cv2.FONT_HERSHEY_SIMPLEX, 0.8, tips_color, 2)
             cv2.putText(frame_bgr, "'q': Quit & Generate Report", (10, H - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.8, tips_color, 2)
+
+            if warning_text and (current_time - warning_display_start) < WARNING_DURATION:
+                cv2.putText(frame_bgr, warning_text, (W//2 - 250, H - 100), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+            elif (current_time - warning_display_start) >= WARNING_DURATION:
+                warning_text = "" 
 
             # 6. 繪製標準 UI
             # 傳遞 fps 資訊
@@ -203,10 +214,15 @@ def main():
                 status = "ON" if enable_blur else "OFF"
                 print(f"背景模糊: {status}")
             elif key == ord("r"):
-                pomodoro_start = time.time()
-                voice.stop() # 清除之前的語音排程
-                voice.say("計時器已重置")
-                print("Timer Reset")
+                if time_left <= 0:
+                    pomodoro_start = time.time()
+                    voice.stop() # 清除之前的語音排程
+                    voice.say("計時器已重置")
+                    print("Timer Reset")
+                else:
+                    warning_text = "Cannot reset: Timer is running!"
+                    warning_display_start = time.time()
+                    print("Cannot reset: Timer is still running.")
 
     cap.release()
     cv2.destroyAllWindows()
