@@ -181,6 +181,11 @@ def main():
             else:
                 cv2.putText(frame_bgr, timer_text, (W - 350, 32), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, timer_color, 2)
+            
+            tips_color = (0, 0, 0) 
+            cv2.putText(frame_bgr, "'b': Blur background", (10, H - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.8, tips_color, 2)
+            cv2.putText(frame_bgr, "'r': Reset Timer", (10, H - 55), cv2.FONT_HERSHEY_SIMPLEX, 0.8, tips_color, 2)
+            cv2.putText(frame_bgr, "'q': Quit & Generate Report", (10, H - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.8, tips_color, 2)
 
             # 6. 繪製標準 UI
             # 傳遞 fps 資訊

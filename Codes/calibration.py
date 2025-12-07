@@ -48,6 +48,11 @@ def run_calibration():
 
         cv2.putText(display_frame, f"Images Captured: {count}", (20, 50), 
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        text_color = (0, 0, 0) 
+        cv2.putText(display_frame, "Press 's' to capture sample", (20, 90), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, text_color, 2)
+        cv2.putText(display_frame, "Press 'q' to finish & calculate", (20, 130), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, text_color, 2)
         
         cv2.imshow('Calibration', display_frame)
         key = cv2.waitKey(1)
