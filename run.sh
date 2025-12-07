@@ -1,5 +1,5 @@
 #calibrate first
-python calibration.py
+python Codes/calibration.py
 
 #then run main.py
-python main.py
+python Codes/main.py
