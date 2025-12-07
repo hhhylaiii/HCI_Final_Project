@@ -58,6 +58,7 @@ def main():
     start_time = time.time()     # 程式開始時間
     pomodoro_start = time.time() # 番茄鐘開始時間
     last_warning_time = 0        # 上次語音警告時間
+    last_pomodoro_warning_time = 0 # 上次番茄鐘語音警告時間
     long_term_history = []       # 用於最後畫圖的數據 (時間, 分數)
     
     print("--- 操作說明 ---")
@@ -174,8 +175,9 @@ def main():
             if time_left <= 0:
                 cv2.putText(frame_bgr, "TIME TO STAND UP!", (W//2 - 200, H//2), 
                             cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
-                if int(current_time) % 5 == 0: # 每5秒叫一次
+                if (current_time - last_pomodoro_warning_time) > 5.0: # 每5秒叫一次
                     voice.say("時間到了，請起來活動一下")
+                    last_pomodoro_warning_time = current_time
             else:
                 cv2.putText(frame_bgr, timer_text, (W - 350, 32), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, timer_color, 2)
@@ -197,6 +199,7 @@ def main():
                 print(f"背景模糊: {status}")
             elif key == ord("r"):
                 pomodoro_start = time.time()
+                voice.stop() # 清除之前的語音排程
                 voice.say("計時器已重置")
                 print("Timer Reset")
 
