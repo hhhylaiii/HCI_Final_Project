@@ -61,6 +61,19 @@ def main():
     last_pomodoro_warning_time = 0 # 上次番茄鐘語音警告時間
     long_term_history = []       # 用於最後畫圖的數據 (時間, 分數)
     
+    # 用戶離席相關變數
+    was_user_present = False     # 上一幀用戶是否在場
+    paused_duration = 0          # 累計暫停時間 (用於計算有效的久坐時間)
+    pause_start_time = None      # 開始暫停的時間點
+    away_periods = []            # 離席時段列表 [(start_elapsed, end_elapsed), ...]
+    
+    # 防抖動相關變數 (Debounce)
+    LOW_SCORE_DEBOUNCE = 1.5     # 低分警告延遲時間 (秒)
+    RETURN_DEBOUNCE = 3.0        # 用戶回來確認時間 (秒)
+    low_score_start_time = None  # 低分開始時間 (用於延遲警告)
+    user_return_start_time = None # 用戶回來開始時間 (用於確認真正坐下)
+    user_confirmed_back = True   # 用戶是否已確認回來
+    
     warning_text = ""
     warning_display_start = 0
     WARNING_DURATION = 1.0
@@ -111,14 +124,59 @@ def main():
             if results.pose_landmarks:
                 is_user_present = True
                 h, w = frame_bgr.shape[:2]
-
-                # 畫骨架
-                draw_pose_landmarks(frame_bgr, results.pose_landmarks)
                 
-                features = extract_face_shoulder_features(results.pose_landmarks.landmark, w, h)
-
-                if not is_calibrated:
+                # 用戶回來時的處理 (加入防抖動)
+                # 條件: 用戶剛被偵測到 (之前不在場)，已校正，尚未確認回來，且尚未開始計時
+                if not was_user_present and is_calibrated and not user_confirmed_back and user_return_start_time is None:
+                    # 用戶剛被偵測到且之前已離開，開始計時確認
+                    user_return_start_time = current_time
+                    print("偵測到用戶，等待確認...")
+                
+                # 檢查是否處於確認回來的狀態
+                is_confirming_return = (user_return_start_time is not None and not user_confirmed_back and is_calibrated)
+                
+                if is_confirming_return:
+                    # --- 確認回來中 (3秒確認期) ---
+                    confirm_elapsed = current_time - user_return_start_time
+                    confirm_progress = min(confirm_elapsed / RETURN_DEBOUNCE, 1.0)
+                    
+                    if confirm_elapsed >= RETURN_DEBOUNCE:
+                        # 用戶已穩定坐下 3 秒，確認回來
+                        pomodoro_start = time.time()
+                        paused_duration = 0
+                        # 記錄離席時段結束
+                        if pause_start_time is not None:
+                            away_end = elapsed_time
+                            away_start = away_end - (current_time - pause_start_time)
+                            away_periods.append((away_start, away_end))
+                        pause_start_time = None
+                        user_confirmed_back = True
+                        user_return_start_time = None
+                        print("用戶回來 - 計時器重置")
+                        voice.say("歡迎回來，計時器已重置")
+                    else:
+                        # 顯示確認中的 UI (不進行姿勢評分)
+                        cv2.putText(frame_bgr, "Confirming return...", (50, 100), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 200, 255), 2)
+                        
+                        # 畫確認進度條
+                        bar_w, bar_h = 300, 20
+                        x_start, y_start = 50, 130
+                        cv2.rectangle(frame_bgr, (x_start, y_start), (x_start + bar_w, y_start + bar_h), (100, 100, 100), -1)
+                        cv2.rectangle(frame_bgr, (x_start, y_start), (x_start + int(bar_w * confirm_progress), y_start + bar_h), (0, 200, 255), -1)
+                        cv2.putText(frame_bgr, f"{confirm_elapsed:.1f}s / {RETURN_DEBOUNCE:.0f}s", 
+                                    (x_start + bar_w + 10, y_start + 15), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
+                        
+                        # 畫骨架 (但不評分)
+                        draw_pose_landmarks(frame_bgr, results.pose_landmarks)
+                
+                elif not is_calibrated:
                     # --- 校正階段 ---
+                    # 畫骨架
+                    draw_pose_landmarks(frame_bgr, results.pose_landmarks)
+                    
+                    features = extract_face_shoulder_features(results.pose_landmarks.landmark, w, h)
                     calibration_data.append(features)
                     progress = len(calibration_data) / CALIBRATION_FRAMES
                     
@@ -139,7 +197,11 @@ def main():
                         print("Calibration complete.")
                 
                 else:
-                    # --- 監控階段 ---
+                    # --- 正常監控階段 ---
+                    # 畫骨架
+                    draw_pose_landmarks(frame_bgr, results.pose_landmarks)
+                    
+                    features = extract_face_shoulder_features(results.pose_landmarks.landmark, w, h)
                     result_dict = scorer.compute(features)
                     history.update(current_time, result_dict)
                     
@@ -148,12 +210,20 @@ def main():
                     # 記錄數據給最後的圖表
                     long_term_history.append((elapsed_time, score))
 
-                    # [功能] 語音警告 (低分且冷卻時間已過)
+                    # [功能] 語音警告 (低分且持續 1.5 秒)
                     if score < LOW_SCORE_THRESHOLD:
-                        if (current_time - last_warning_time) > WARNING_COOLDOWN:
-                            print("hello")
-                            voice.say("請坐好，注意姿勢")
-                            last_warning_time = current_time
+                        # 開始計時低分持續時間
+                        if low_score_start_time is None:
+                            low_score_start_time = current_time
+                        elif (current_time - low_score_start_time) >= LOW_SCORE_DEBOUNCE:
+                            # 低分已持續足夠時間，且冷却時間已過
+                            if (current_time - last_warning_time) > WARNING_COOLDOWN:
+                                print("低分持續，發出警告")
+                                voice.say("請坐好，注意姿勢")
+                                last_warning_time = current_time
+                    else:
+                        # 分數恢復，重置低分計時器
+                        low_score_start_time = None
 
             else:
                 # --- [功能] 離席偵測 ---
@@ -161,34 +231,48 @@ def main():
                 cv2.putText(frame_bgr, "User Away - Paused", (50, 100), 
                             cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 165, 255), 2)
                 
-                # 選項：離席時是否要重置久坐計時器？ 這裡假設離席不算休息，只有按 'r' 才算
-                # 這裡可以根據需求修改邏輯
+                # 用戶離開時開始計算暫停時間
+                if was_user_present:
+                    # 用戶剛剛離開，開始暫停計時
+                    pause_start_time = current_time
+                    user_confirmed_back = False  # 重置確認狀態
+                    print("用戶離席 - 計時器暫停")
+                
+                # 用戶離開時重置回來計時器
+                user_return_start_time = None
+                
+                # 用戶離開時重置低分計時器 (防止誤報)
+                low_score_start_time = None
 
-            # 5. [功能] 久坐提醒 (番茄鐘)
-            pomodoro_elapsed = current_time - pomodoro_start
-            time_left = POMODORO_LIMIT_SECONDS - pomodoro_elapsed
-            
-            # 顯示倒數計時
-            timer_color = (0, 255, 0)
-            if time_left < 60: timer_color = (0, 0, 255) # 最後一分鐘變紅
-            
-            minutes = int(time_left // 60)
-            seconds = int(time_left % 60)
-            timer_text = f"Break in: {minutes:02d}:{seconds:02d}"
-            
-            if time_left <= 0:
-                cv2.putText(frame_bgr, "TIME TO STAND UP!", (W//2 - 200, H//2), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
-                if (current_time - last_pomodoro_warning_time) > 5.0: # 每5秒叫一次
-                    voice.say("時間到了，請起來活動一下")
-                    last_pomodoro_warning_time = current_time
+            # 5. [功能] 久坐提醒 (番茄鐘) - 只在用戶確認在場時運行
+            if is_user_present and user_confirmed_back:
+                pomodoro_elapsed = current_time - pomodoro_start - paused_duration
+                time_left = POMODORO_LIMIT_SECONDS - pomodoro_elapsed
+                
+                # 顯示倒數計時
+                timer_color = (0, 255, 0)
+                if time_left < 60: timer_color = (0, 0, 255) # 最後一分鐘變紅
+                
+                minutes = int(time_left // 60)
+                seconds = int(time_left % 60)
+                timer_text = f"Break in: {minutes:02d}:{seconds:02d}"
+                
+                if time_left <= 0:
+                    cv2.putText(frame_bgr, "TIME TO STAND UP!", (W//2 - 200, H//2), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
+                    if (current_time - last_pomodoro_warning_time) > 5.0: # 每5秒叫一次
+                        voice.say("時間到了，請起來活動一下")
+                        last_pomodoro_warning_time = current_time
+                else:
+                    cv2.putText(frame_bgr, timer_text, (W - 350, 32), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, timer_color, 2)
             else:
-                cv2.putText(frame_bgr, timer_text, (W - 350, 32), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, timer_color, 2)
+                # 用戶不在場或確認中，顯示暫停狀態
+                cv2.putText(frame_bgr, "Timer: PAUSED", (W - 350, 32), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
             
             tips_color = (0, 0, 0) 
             cv2.putText(frame_bgr, "'b': Blur background", (10, H - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.8, tips_color, 2)
-            cv2.putText(frame_bgr, "'r': Reset Timer", (10, H - 55), cv2.FONT_HERSHEY_SIMPLEX, 0.8, tips_color, 2)
             cv2.putText(frame_bgr, "'r': Reset Timer", (10, H - 55), cv2.FONT_HERSHEY_SIMPLEX, 0.8, tips_color, 2)
             cv2.putText(frame_bgr, "'q': Quit & Generate Report", (10, H - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.8, tips_color, 2)
 
@@ -198,10 +282,17 @@ def main():
             elif (current_time - warning_display_start) >= WARNING_DURATION:
                 warning_text = "" 
 
-            # 6. 繪製標準 UI
+            # 6. 繪製標準 UI (只在用戶確認在場時顯示姿勢評分)
             # 傳遞 fps 資訊
             fps = 1.0 / (time.time() - (current_time - 0.01)) # 簡單估算
-            draw_posture_ui(frame_bgr, result_dict, fps=fps, history_summary=history.snapshot())
+            if is_user_present and user_confirmed_back:
+                draw_posture_ui(frame_bgr, result_dict, fps=fps, history_summary=history.snapshot())
+            else:
+                # 用戶不在場或確認中只顯示 FPS
+                draw_posture_ui(frame_bgr, None, fps=fps, history_summary=None)
+            
+            # 更新用戶在場狀態
+            was_user_present = is_user_present
 
             cv2.imshow("Smart Posture Assistant", frame_bgr)
             
@@ -214,8 +305,16 @@ def main():
                 status = "ON" if enable_blur else "OFF"
                 print(f"背景模糊: {status}")
             elif key == ord("r"):
-                if time_left <= 0:
+                # 計算當前的剩餘時間 (如果用戶在場)
+                if is_user_present:
+                    current_elapsed = current_time - pomodoro_start - paused_duration
+                    current_time_left = POMODORO_LIMIT_SECONDS - current_elapsed
+                else:
+                    current_time_left = 1  # 用戶不在場時不允許重置
+                
+                if current_time_left <= 0:
                     pomodoro_start = time.time()
+                    paused_duration = 0  # 重置暫停時間
                     voice.stop() # 清除之前的語音排程
                     voice.say("計時器已重置")
                     print("Timer Reset")
@@ -228,8 +327,14 @@ def main():
     cv2.destroyAllWindows()
     
     # 8. [功能] 程式結束，生成報告
+    # 如果用戶在離席狀態下結束程式，記錄最後一個離席時段
+    if pause_start_time is not None:
+        final_elapsed = time.time() - start_time
+        away_start = final_elapsed - (time.time() - pause_start_time)
+        away_periods.append((away_start, final_elapsed))
+    
     print("正在生成健康報告...")
-    generate_report(long_term_history, (time.time() - start_time)/60)
+    generate_report(long_term_history, (time.time() - start_time)/60, away_periods)
 
 if __name__ == "__main__":
     main()
